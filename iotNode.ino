@@ -134,25 +134,24 @@ typedef struct{
  * -----------------------------------------------------------------------------------------------------
  */
 
-#define RUN_MODE                  MODE_DEPLOYED_GARAGE
-//#define RUN_MODE                  MODE_DEPLOYED_HOUSE
+//#define RUN_MODE                  MODE_DEPLOYED_GARAGE
+#define RUN_MODE                  MODE_DEPLOYED_HOUSE
 //#define RUN_MODE                  MODE_TEST_LOCAL
 //#define RUN_MODE                  MODE_TEST_LIVE
 
 dallasSensor dallasSensors[] = {    //   sensorName, I2C address, isFound
 //  { "Living Room",      {0x28, 0xF0, 0x2E, 0x7C, 0x05, 0x00, 0x00, 0xB9},     false },
 //  { "Hall",             {0x28, 0x29, 0x09, 0x7C, 0x05, 0x00, 0x00, 0x42},     false },
-//  { "Radiator",         {0x28, 0x8D, 0xCB, 0x00, 0x04, 0x00, 0x00, 0x72},     false },
+  { "Living Room",         {0x28, 0x8D, 0xCB, 0x00, 0x04, 0x00, 0x00, 0x72},     false }
 //  { "Kitchen",          {0x28, 0x23, 0x9D, 0x7B, 0x05, 0x00, 0x00, 0xA3},     false }
 };
 
 ahtSensor ahtSensors[] = {        //  sensorName, muxChannel, isFound
-  { "ahtInside",      0,       false},
-  { "ahtOutside",     1,       false}
+//  { "ahtInside",      0,       false},
 };
 
 bmpSensor bmpSensors[] = {       //  sensorName, muxChannel, isFound
-  { "bmpOutside",  1 , false}
+//  { "bmpOutside",  1 , false}
 };
 
 
@@ -190,7 +189,7 @@ bmpSensor bmpSensors[] = {       //  sensorName, muxChannel, isFound
   #define         READ_INTERVAL    0.1
   const IPAddress SERVER_HOST(192,168,1,64);
     
-#elif RUN_MODE == DEPLOYED_GARAGE
+#elif RUN_MODE == MODE_DEPLOYED_GARAGE
   #define         IS_DEPLOYED      true
   #define         WIFI_NAME        "IvyTerrace_EXT"
   #define         SERVER_PATH      "/iot/api/new-data"
@@ -198,7 +197,7 @@ bmpSensor bmpSensors[] = {       //  sensorName, muxChannel, isFound
   #define         READ_INTERVAL    15
   const char      SERVER_HOST[]    = "www.thingummy.cc";  
 
-#elif RUN_MODE == DEPLOYED_HOUSE
+#elif RUN_MODE == MODE_DEPLOYED_HOUSE
   #define         IS_DEPLOYED      true
   #define         WIFI_NAME        "IvyTerrace"
   #define         SERVER_PATH      "/iot/api/new-data"
