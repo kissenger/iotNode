@@ -101,20 +101,19 @@ void TimerHandler_TCC1(void) {
 #define PIN_DIGITAL_TEMPS         2
 #define SERVER_RESPONSE_TIMEOUT   20000
 #define WIFI_LOOP_DELAY           10000
-#define SHT_HEATER_ON_THRESH      85
-#define SHT_HEATER_HEAT_TIME      60        //seconds
-#define SHT_HEATER_COOL_TIME      60        //seconds
+#define SHT_HEATER_ON_THRESH      90
+#define SHT_PREHEAT_TIME          120000        //ms
 
 WiFiClient        client;
 OneWire           oneWire(PIN_DIGITAL_TEMPS);
 DallasTemperature DallasSensors(&oneWire);
-uint32_t          lastSensorTime         = 0; 
-uint32_t          shtHeaterOnTime        = 0;
+uint32_t          lastSensorTime           = 0; 
 uint32_t          interval;
-bool              forceSensorLoop        = true;
-bool              responseRecieved       = true;
-bool              isShtHeaterOn          = false;
-char *            serverResponse         = "";
+bool              forceSensorLoop          = true;
+bool              responseRecieved         = true;
+bool              preHeatConditionsChecked = false;
+char *            serverResponse           = "";
+
 
 
 typedef struct{
@@ -150,19 +149,19 @@ typedef struct{
  */
 
 //#define RUN_MODE                  MODE_DEPLOYED_GARAGE
-#define RUN_MODE                  MODE_DEPLOYED_HOUSE
+//#define RUN_MODE                  MODE_DEPLOYED_HOUSE
 //#define RUN_MODE                  MODE_TEST_LOCAL
-//#define RUN_MODE                  MODE_TEST_LIVE
+#define RUN_MODE                  MODE_TEST_LIVE
 
 dallasSensor dallasSensors[] = {    //   sensorName, I2C address, isFound
 //  { "Hall",             {0x28, 0x95, 0x1F, 0xE4, 0xB1, 0x21, 0x06, 0xDF},     false },
 //  { "Hall Radiator",    {0x28, 0xAD, 0xB0, 0x08, 0x0A, 0x00, 0x00, 0x31},     false },
 //  { "Living Room",      {0x28, 0x13, 0x9E, 0x0A, 0x0A, 0x00, 0x00, 0x78},     false },
 //  { "Kitchen",          {0x28, 0xF0, 0x2E, 0x7C, 0x05, 0x00, 0x00, 0xB9},     false }
-  { "Gordons Office",         {0x28, 0x8D, 0xCB, 0x00, 0x04, 0x00, 0x00, 0x72},     false }
+//  { "Gordons Office",         {0x28, 0x8D, 0xCB, 0x00, 0x04, 0x00, 0x00, 0x72},     false }
 //    { "dallasOutside",          {0x28, 0xB0, 0x14, 0x81, 0xE3, 0x31, 0x3C, 0xFB}, false},
 //    { "dallasStoreRoom",        {0x28, 0x29, 0x09, 0x7C, 0x05, 0x00, 0x00, 0x42}, false}
-
+    { "dallasTestOnly",        {0x28, 0xB1, 0xB3, 0x9E, 0xB1, 0x21, 0x06, 0x14}, false}
 };
 
 ahtSensor ahtSensors[] = {        //  sensorName, muxChannel, isFound
@@ -177,7 +176,7 @@ bmpSensor bmpSensors[] = {       //  sensorName, muxChannel, isFound
 };
 
 shtSensor shtSensors[] = {       //  sensorName, muxChannel, isFound
-//  { "shtOutside",  99 , false}
+  { "shtOutside",  99 , false}
 };
 
 /*
@@ -202,7 +201,7 @@ shtSensor shtSensors[] = {       //  sensorName, muxChannel, isFound
   #define         WIFI_NAME        "IvyTerrace"
   #define         SERVER_PATH      "/iot/api/new-data"
   #define         SERVER_PORT      80
-  #define         READ_INTERVAL    0.1
+  #define         READ_INTERVAL    3
 //  #define         READ_INTERVAL    1
   const char      SERVER_HOST[]    = "www.thingummy.cc";  
   
@@ -228,21 +227,29 @@ shtSensor shtSensors[] = {       //  sensorName, muxChannel, isFound
   #define         WIFI_NAME        "IvyTerrace"
   #define         SERVER_PATH      "/iot/api/new-data"
   #define         SERVER_PORT      80
-  #define         READ_INTERVAL    15
+  #define         READ_INTERVAL    2
   const char      SERVER_HOST[]    = "www.thingummy.cc";
     
 #endif
 
-const uint32_t    READ_SENSOR_INTERVAL      = READ_INTERVAL * 60UL * 1000UL;
+const uint32_t    readSensorInterval      = READ_INTERVAL * 60UL * 1000UL;
 const uint8_t     nDallasSensors            = sizeof(dallasSensors) / sizeof(dallasSensors[0]);
 const uint8_t     nAhtSensors               = sizeof(ahtSensors) / sizeof(ahtSensors[0]);
 const uint8_t     nBmpSensors               = sizeof(bmpSensors) / sizeof(bmpSensors[0]);
 const uint8_t     nShtSensors               = sizeof(shtSensors) / sizeof(shtSensors[0]);
+uint32_t          shtHeaterOnTime[nShtSensors];
+uint32_t          shtHeaterOffTime[nShtSensors];
+bool              shtIsHeaterOn[nShtSensors];
+float             shtPrecheckTemp[nShtSensors];
+float             shtPrecheckRH[nShtSensors]; 
 
 Adafruit_AHTX0  ahtInstance[nAhtSensors]; 
 Adafruit_BMP085 bmpInstance[nBmpSensors];
 Adafruit_SHT31  shtInstance[nShtSensors];
 sensors_event_t ahtHumidity, ahtTemp;
+
+
+
 
 
 /*
@@ -305,6 +312,9 @@ void setup() {
 
   // Initialise SHT humidity sensors
   for (uint8_t i = 0; i < nShtSensors; i++) {
+    shtHeaterOnTime[i] = 0;
+    shtHeaterOffTime[i] = 0;
+    shtIsHeaterOn[i] = false;    
     if ( shtSensors[i].muxChannel != 99) {
       selectMuxChannel( shtSensors[i].muxChannel );
     }
@@ -315,7 +325,7 @@ void setup() {
       errorCode = 8;
     }
   }  
-
+  
   // Start blink timer
   ITimer1.attachInterruptInterval_MS(HW_TIMER_INTERVAL_MS, TimerHandler_TCC1);
   ISR_Timer_TCC1.setInterval(TIMER_INTERVAL, errorBlinker);
@@ -366,94 +376,113 @@ void loop() {
   }
 
   // force sensor loop at reduced interval if there is an error code, or if heater is enabled (on)
-  if ( errorCode ) {
-    interval = SERVER_RESPONSE_TIMEOUT;
-  } else {
-    interval = READ_SENSOR_INTERVAL;
-  }
+//  if ( errorCode ) {
+//    interval = SERVER_RESPONSE_TIMEOUT;
+//  } else {
+//    interval = readSensorInterval;
+//  }
 
+  // if there is an sht, determine if heater should be turned on
+  if ( !preHeatConditionsChecked ) {
+    if ( millis() - lastSensorTime > readSensorInterval - SHT_PREHEAT_TIME ) {
+      preHeatConditionsChecked = true;
+      for (uint8_t i = 0; i < nShtSensors; i++ ) {
+        if ( shtHeaterOnTime[i] <= shtHeaterOffTime[i] ) {  // heater is off        
+          shtPrecheckTemp[i] = shtInstance[i].readTemperature();
+          shtPrecheckRH[i] = shtInstance[i].readHumidity(); 
+          if ( shtPrecheckRH[i] > SHT_HEATER_ON_THRESH ) {
+            DEBUG_PRINTLN("SHT " + String(i) + ": High RH before measurement, preheater on.");
+            shtHeaterOnTime[i] = shtTurnOnHeater(i);
+          }
+        }     
+      }
+    } else {
+      // ensure heater is off
+      for (uint8_t i = 0; i < nShtSensors; i++ ) { 
+        if ( shtHeaterOnTime[i] > shtHeaterOffTime[i] ) {     
+          DEBUG_PRINTLN("SHT " + String(i) + ": Preheater off.");      
+          shtHeaterOffTime[i] = shtTurnOffHeater(i);
+        }
+      }
+    }
+  }
+  
   // sensor loop
-  if ( millis() - lastSensorTime > interval || forceSensorLoop ) {
+  if ( millis() - lastSensorTime > readSensorInterval || forceSensorLoop ) {
 
     // set up loop variables
+    preHeatConditionsChecked = false;
     lastSensorTime = millis();
     forceSensorLoop = false;
     responseRecieved = false;
     serverResponse = "";
-//    StaticJsonDocument<4096> doc;
-//    JsonObject root = doc.to<JsonObject>();
-//    JsonArray arr = root.createNestedArray("data");  
-
-//    StaticJsonDocument<1024> doc;  
-
     DynamicJsonDocument doc(2048);
     JsonArray data = doc.createNestedArray("data");
     
     // get temperature data from dallas sensors bus
     if ( nDallasSensors > 0) {
       DallasSensors.requestTemperatures();
-      for (uint8_t i = 0; i < nDallasSensors; i++) {
-        if ( dallasSensors[i].isFound ) {
-          JsonObject obj = data.createNestedObject();
-          obj["sensor_name"] = dallasSensors[i].sensorName;
-          obj["sensor_type"] = "ds18b20";
-          obj["deployed"] = IS_DEPLOYED; 
-          obj["temp"] = DallasSensors.getTempC(dallasSensors[i].address);
-        }
+    }      
+    for (uint8_t i = 0; i < nDallasSensors; i++) {
+      if ( dallasSensors[i].isFound ) {
+        JsonObject obj = data.createNestedObject();
+        obj["sensor_name"] = dallasSensors[i].sensorName;
+        obj["sensor_type"] = "ds18b20";
+        obj["deployed"] = IS_DEPLOYED; 
+        obj["temp"] = DallasSensors.getTempC(dallasSensors[i].address);
       }
     }
 
+
     // get data from aht sensors 
-    if ( nAhtSensors > 0) {
-      for (uint8_t i = 0; i < nAhtSensors; i++) {
-        if ( ahtSensors[i].isFound ) {
-          JsonObject obj = data.createNestedObject();
-          if ( ahtSensors[i].muxChannel != 99) {
-            selectMuxChannel(ahtSensors[i].muxChannel);
-          }
-          ahtInstance[i].getEvent(&ahtHumidity, &ahtTemp);
-          obj["sensor_name"] = ahtSensors[i].sensorName;
-          obj["sensor_type"] = "ahtx0";
-          obj["deployed"] = IS_DEPLOYED;
-          obj["temp"] = ahtTemp.temperature;
-          obj["rh"] = ahtHumidity.relative_humidity;
+    for (uint8_t i = 0; i < nAhtSensors; i++) {
+      if ( ahtSensors[i].isFound ) {
+        JsonObject obj = data.createNestedObject();
+        if ( ahtSensors[i].muxChannel != 99) {
+          selectMuxChannel(ahtSensors[i].muxChannel);
         }
+        ahtInstance[i].getEvent(&ahtHumidity, &ahtTemp);
+        obj["sensor_name"] = ahtSensors[i].sensorName;
+        obj["sensor_type"] = "ahtx0";
+        obj["deployed"] = IS_DEPLOYED;
+        obj["temp"] = ahtTemp.temperature;
+        obj["rh"] = ahtHumidity.relative_humidity;
       }
     }   
 
-    // get data from bmp sensors 
-    if ( nBmpSensors > 0) {
-      for (uint8_t i = 0; i < nBmpSensors; i++) {
-        if ( bmpSensors[i].isFound ) {
-          JsonObject obj = data.createNestedObject();
-          if ( ahtSensors[i].muxChannel != 99) {
-            selectMuxChannel(bmpSensors[i].muxChannel);
-          }
-          obj["sensor_name"] = bmpSensors[i].sensorName;
-          obj["sensor_type"] = "bmp180";
-          obj["deployed"] = IS_DEPLOYED;
-          obj["press"] = bmpInstance[i].readSealevelPressure();
-          obj["temp"] = bmpInstance[i].readTemperature();
+    // get data from bmp sensors
+    for (uint8_t i = 0; i < nBmpSensors; i++) {
+      if ( bmpSensors[i].isFound ) {
+        JsonObject obj = data.createNestedObject();
+        if ( ahtSensors[i].muxChannel != 99) {
+          selectMuxChannel(bmpSensors[i].muxChannel);
         }
+        obj["sensor_name"] = bmpSensors[i].sensorName;
+        obj["sensor_type"] = "bmp180";
+        obj["deployed"] = IS_DEPLOYED;
+        obj["press"] = bmpInstance[i].readPressure();
+        obj["temp"] = bmpInstance[i].readTemperature();
       }
-    }     
+    }   
 
-    // get data from sht sensors 
-    if ( nShtSensors > 0) {
-      for (uint8_t i = 0; i < nShtSensors; i++) {
-        if ( shtSensors[i].isFound ) {
-          JsonObject obj = data.createNestedObject();
-          if ( shtSensors[i].muxChannel != 99) {
-            selectMuxChannel( shtSensors[i].muxChannel );
-          }
-          obj["sensor_name"] = shtSensors[i].sensorName;
-          obj["sensor_type"] = "sht31";
-          obj["deployed"] = IS_DEPLOYED;
-          obj["temp"] = shtInstance[i].readTemperature();
-          obj["rh"] = shtInstance[i].readHumidity();            
+    // get data from sht sensors
+    for (uint8_t i = 0; i < nShtSensors; i++) {
+      if ( shtSensors[i].isFound ) {
+        JsonObject obj = data.createNestedObject();
+        if ( shtSensors[i].muxChannel != 99) {
+          selectMuxChannel( shtSensors[i].muxChannel );
         }
+        obj["sensor_name"] = shtSensors[i].sensorName;
+        obj["sensor_type"] = "sht31";
+        obj["deployed"] = IS_DEPLOYED;
+        obj["temp"] = shtInstance[i].readTemperature();
+        obj["rh"] = shtInstance[i].readHumidity();
+        obj["temp_pre"] = shtPrecheckTemp[i];
+        obj["rh_pre"] = shtPrecheckRH[i];     
+        obj["heater_on"] = shtHeaterOnTime[i] > shtHeaterOffTime[i];
       }
-    }       
+      // leave heater turnoff until main loop
+    }
     
     // Check for server connection 
     client.stop();
@@ -551,3 +580,17 @@ void selectMuxChannel(int i) {
   Wire.write(1 << i);
   Wire.endTransmission();
 }
+
+uint32_t shtTurnOnHeater(uint8_t index) {
+  shtInstance[index].heater(true); 
+  return millis();
+}
+
+uint32_t shtTurnOffHeater(uint8_t index) {
+  shtInstance[index].heater(false); 
+  return millis();
+}
+
+//float fTo2dp(float n) {
+//   return (int)(n * 100 + 0.5) / 100.0;
+//}
