@@ -101,8 +101,9 @@ void TimerHandler_TCC1(void) {
 #define PIN_DIGITAL_TEMPS         2
 #define SERVER_RESPONSE_TIMEOUT   20000
 #define WIFI_LOOP_DELAY           10000
-#define SHT_HEATER_ON_THRESH      90
-#define SHT_PREHEAT_TIME          120000        //ms
+#define SHT_HEATER_ON_TIME        5000
+#define SHT_HEATER_OFF_TIME       100000        //ms
+#define SHT_HEATER_PREHEAT_THRESH 90
 
 WiFiClient        client;
 OneWire           oneWire(PIN_DIGITAL_TEMPS);
@@ -149,9 +150,9 @@ typedef struct{
  */
 
 //#define RUN_MODE                  MODE_DEPLOYED_GARAGE
-//#define RUN_MODE                  MODE_DEPLOYED_HOUSE
+#define RUN_MODE                  MODE_DEPLOYED_HOUSE
 //#define RUN_MODE                  MODE_TEST_LOCAL
-#define RUN_MODE                  MODE_TEST_LIVE
+//#define RUN_MODE                  MODE_TEST_LIVE
 
 dallasSensor dallasSensors[] = {    //   sensorName, I2C address, isFound
 //  { "Hall",             {0x28, 0x95, 0x1F, 0xE4, 0xB1, 0x21, 0x06, 0xDF},     false },
@@ -201,7 +202,7 @@ shtSensor shtSensors[] = {       //  sensorName, muxChannel, isFound
   #define         WIFI_NAME        "IvyTerrace"
   #define         SERVER_PATH      "/iot/api/new-data"
   #define         SERVER_PORT      80
-  #define         READ_INTERVAL    3
+  #define         READ_INTERVAL    10
 //  #define         READ_INTERVAL    1
   const char      SERVER_HOST[]    = "www.thingummy.cc";  
   
@@ -227,7 +228,7 @@ shtSensor shtSensors[] = {       //  sensorName, muxChannel, isFound
   #define         WIFI_NAME        "IvyTerrace"
   #define         SERVER_PATH      "/iot/api/new-data"
   #define         SERVER_PORT      80
-  #define         READ_INTERVAL    2
+  #define         READ_INTERVAL    15
   const char      SERVER_HOST[]    = "www.thingummy.cc";
     
 #endif
@@ -240,8 +241,8 @@ const uint8_t     nShtSensors               = sizeof(shtSensors) / sizeof(shtSen
 uint32_t          shtHeaterOnTime[nShtSensors];
 uint32_t          shtHeaterOffTime[nShtSensors];
 bool              shtIsHeaterOn[nShtSensors];
-float             shtPrecheckTemp[nShtSensors];
-float             shtPrecheckRH[nShtSensors]; 
+//float             shtPrecheckTemp[nShtSensors];
+//float             shtPrecheckRH[nShtSensors]; 
 
 Adafruit_AHTX0  ahtInstance[nAhtSensors]; 
 Adafruit_BMP085 bmpInstance[nBmpSensors];
@@ -382,30 +383,30 @@ void loop() {
 //    interval = readSensorInterval;
 //  }
 
-  // if there is an sht, determine if heater should be turned on
-  if ( !preHeatConditionsChecked ) {
-    if ( millis() - lastSensorTime > readSensorInterval - SHT_PREHEAT_TIME ) {
-      preHeatConditionsChecked = true;
-      for (uint8_t i = 0; i < nShtSensors; i++ ) {
-        if ( shtHeaterOnTime[i] <= shtHeaterOffTime[i] ) {  // heater is off        
-          shtPrecheckTemp[i] = shtInstance[i].readTemperature();
-          shtPrecheckRH[i] = shtInstance[i].readHumidity(); 
-          if ( shtPrecheckRH[i] > SHT_HEATER_ON_THRESH ) {
-            DEBUG_PRINTLN("SHT " + String(i) + ": High RH before measurement, preheater on.");
-            shtHeaterOnTime[i] = shtTurnOnHeater(i);
-          }
-        }     
-      }
-    } else {
-      // ensure heater is off
-      for (uint8_t i = 0; i < nShtSensors; i++ ) { 
-        if ( shtHeaterOnTime[i] > shtHeaterOffTime[i] ) {     
-          DEBUG_PRINTLN("SHT " + String(i) + ": Preheater off.");      
-          shtHeaterOffTime[i] = shtTurnOffHeater(i);
-        }
+  //turn heater off if its been on for longet than SHT_HEATER_ON_TIME
+  for (uint8_t i = 0; i < nShtSensors; i++ ) {
+    if ( millis() - shtHeaterOnTime[i] > SHT_HEATER_ON_TIME ) {
+      if ( shtHeaterOnTime[i] >= shtHeaterOffTime[i] ) {  // heater is off    
+        DEBUG_PRINTLN("SHT " + String(i) + ": Preheater off.");      
+        shtHeaterOffTime[i] = shtTurnOffHeater(i);
       }
     }
   }
+
+  for (uint8_t i = 0; i < nShtSensors; i++ ) {
+    if ( 
+      millis() - shtHeaterOffTime[i] > SHT_HEATER_OFF_TIME &&                 // heater has been off long enough
+      millis() - lastSensorTime < readSensorInterval - SHT_HEATER_ON_TIME - SHT_HEATER_OFF_TIME    // there is enough time to turn heater on and off before taking measurement
+      ) {
+        if ( shtHeaterOnTime[i] <= shtHeaterOffTime[i] ) {  // heater is off        
+          if ( shtInstance[i].readHumidity() > SHT_HEATER_PREHEAT_THRESH ) {
+            DEBUG_PRINTLN("SHT " + String(i) + ": High RH before measurement, preheater on.");
+            shtHeaterOnTime[i] = shtTurnOnHeater(i);
+          }
+        }         
+      }
+  }
+  
   
   // sensor loop
   if ( millis() - lastSensorTime > readSensorInterval || forceSensorLoop ) {
@@ -477,9 +478,9 @@ void loop() {
         obj["deployed"] = IS_DEPLOYED;
         obj["temp"] = shtInstance[i].readTemperature();
         obj["rh"] = shtInstance[i].readHumidity();
-        obj["temp_pre"] = shtPrecheckTemp[i];
-        obj["rh_pre"] = shtPrecheckRH[i];     
-        obj["heater_on"] = shtHeaterOnTime[i] > shtHeaterOffTime[i];
+//        obj["temp_pre"] = shtPrecheckTemp[i];
+//        obj["rh_pre"] = shtPrecheckRH[i];     
+//        obj["heater_on"] = shtHeaterOnTime[i] > shtHeaterOffTime[i];
       }
       // leave heater turnoff until main loop
     }
