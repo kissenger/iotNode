@@ -101,8 +101,8 @@ void TimerHandler_TCC1(void) {
 #define PIN_DIGITAL_TEMPS         2
 #define SERVER_RESPONSE_TIMEOUT   20000
 #define WIFI_LOOP_DELAY           10000
-#define SHT_HEATER_ON_TIME        5000
-#define SHT_HEATER_OFF_TIME       100000        //ms
+#define SHT_HEATER_ON_TIME        30000
+#define SHT_HEATER_OFF_TIME       180000        //ms
 #define SHT_HEATER_PREHEAT_THRESH 90
 
 WiFiClient        client;
@@ -112,7 +112,7 @@ uint32_t          lastSensorTime           = 0;
 uint32_t          interval;
 bool              forceSensorLoop          = true;
 bool              responseRecieved         = true;
-bool              preHeatConditionsChecked = false;
+bool              preheatComplete          = false;
 char *            serverResponse           = "";
 
 
@@ -149,8 +149,8 @@ typedef struct{
  * -----------------------------------------------------------------------------------------------------
  */
 
-//#define RUN_MODE                  MODE_DEPLOYED_GARAGE
-#define RUN_MODE                  MODE_DEPLOYED_HOUSE
+#define RUN_MODE                  MODE_DEPLOYED_GARAGE
+//#define RUN_MODE                  MODE_DEPLOYED_HOUSE
 //#define RUN_MODE                  MODE_TEST_LOCAL
 //#define RUN_MODE                  MODE_TEST_LIVE
 
@@ -162,18 +162,18 @@ dallasSensor dallasSensors[] = {    //   sensorName, I2C address, isFound
 //  { "Gordons Office",         {0x28, 0x8D, 0xCB, 0x00, 0x04, 0x00, 0x00, 0x72},     false }
 //    { "dallasOutside",          {0x28, 0xB0, 0x14, 0x81, 0xE3, 0x31, 0x3C, 0xFB}, false},
 //    { "dallasStoreRoom",        {0x28, 0x29, 0x09, 0x7C, 0x05, 0x00, 0x00, 0x42}, false}
-    { "dallasTestOnly",        {0x28, 0xB1, 0xB3, 0x9E, 0xB1, 0x21, 0x06, 0x14}, false}
+//    { "dallasTestOnly",        {0x28, 0xB1, 0xB3, 0x9E, 0xB1, 0x21, 0x06, 0x14}, false}
 };
 
 ahtSensor ahtSensors[] = {        //  sensorName, muxChannel, isFound
   // use muxChannel = 99 if mux is not in use
 //  { "ahtInside",      0,       false},
-//  { "ahtStoreRoom",     99,       false},
+  { "ahtStoreRoom",     99,       false},
 //  { "ahtTest",        2,       false}
 };
 
 bmpSensor bmpSensors[] = {       //  sensorName, muxChannel, isFound
-//  { "bmpStoreRoom",  99 , false}
+  { "bmpStoreRoom",  99 , false}
 };
 
 shtSensor shtSensors[] = {       //  sensorName, muxChannel, isFound
@@ -202,8 +202,8 @@ shtSensor shtSensors[] = {       //  sensorName, muxChannel, isFound
   #define         WIFI_NAME        "IvyTerrace"
   #define         SERVER_PATH      "/iot/api/new-data"
   #define         SERVER_PORT      80
-  #define         READ_INTERVAL    10
-//  #define         READ_INTERVAL    1
+  #define         READ_INTERVAL    5
+//  #define         READ_INTERVAL    5
   const char      SERVER_HOST[]    = "www.thingummy.cc";  
   
 #elif RUN_MODE == MODE_TEST_LOCAL 
@@ -243,6 +243,7 @@ uint32_t          shtHeaterOffTime[nShtSensors];
 bool              shtIsHeaterOn[nShtSensors];
 //float             shtPrecheckTemp[nShtSensors];
 //float             shtPrecheckRH[nShtSensors]; 
+const uint32_t standoffTime = readSensorInterval - SHT_HEATER_ON_TIME - SHT_HEATER_OFF_TIME - 5000;
 
 Adafruit_AHTX0  ahtInstance[nAhtSensors]; 
 Adafruit_BMP085 bmpInstance[nBmpSensors];
@@ -314,8 +315,7 @@ void setup() {
   // Initialise SHT humidity sensors
   for (uint8_t i = 0; i < nShtSensors; i++) {
     shtHeaterOnTime[i] = 0;
-    shtHeaterOffTime[i] = 0;
-    shtIsHeaterOn[i] = false;    
+    shtHeaterOffTime[i] = 0; 
     if ( shtSensors[i].muxChannel != 99) {
       selectMuxChannel( shtSensors[i].muxChannel );
     }
@@ -383,23 +383,23 @@ void loop() {
 //    interval = readSensorInterval;
 //  }
 
-  //turn heater off if its been on for longet than SHT_HEATER_ON_TIME
+  //turn heater off if its been on for longer than SHT_HEATER_ON_TIME
   for (uint8_t i = 0; i < nShtSensors; i++ ) {
-    if ( millis() - shtHeaterOnTime[i] > SHT_HEATER_ON_TIME ) {
-      if ( shtHeaterOnTime[i] >= shtHeaterOffTime[i] ) {  // heater is off    
+//    if ( shtHeaterOnTime[i] > shtHeaterOffTime[i] ) {  // this does not work as fails on millis overflow  
+    if ( shtIsHeaterOn[i] == true ) {   
+      if ( millis() - shtHeaterOnTime[i] > SHT_HEATER_ON_TIME ) {   
         DEBUG_PRINTLN("SHT " + String(i) + ": Preheater off.");      
         shtHeaterOffTime[i] = shtTurnOffHeater(i);
       }
     }
   }
 
-  for (uint8_t i = 0; i < nShtSensors; i++ ) {
-    if ( 
-      millis() - shtHeaterOffTime[i] > SHT_HEATER_OFF_TIME &&                 // heater has been off long enough
-      millis() - lastSensorTime < readSensorInterval - SHT_HEATER_ON_TIME - SHT_HEATER_OFF_TIME    // there is enough time to turn heater on and off before taking measurement
-      ) {
-        if ( shtHeaterOnTime[i] <= shtHeaterOffTime[i] ) {  // heater is off        
+  for (uint8_t i = 0; i < nShtSensors; i++ ) {    
+//    Serial.println( preheatComplete );
+    if ( !preheatComplete && millis() - lastSensorTime > standoffTime ) {    // there is enough time to turn heater on and off before taking measurement
+        if ( shtIsHeaterOn[i] != true ) {           
           if ( shtInstance[i].readHumidity() > SHT_HEATER_PREHEAT_THRESH ) {
+            preheatComplete = true;            
             DEBUG_PRINTLN("SHT " + String(i) + ": High RH before measurement, preheater on.");
             shtHeaterOnTime[i] = shtTurnOnHeater(i);
           }
@@ -412,7 +412,7 @@ void loop() {
   if ( millis() - lastSensorTime > readSensorInterval || forceSensorLoop ) {
 
     // set up loop variables
-    preHeatConditionsChecked = false;
+    preheatComplete = false;
     lastSensorTime = millis();
     forceSensorLoop = false;
     responseRecieved = false;
@@ -584,11 +584,13 @@ void selectMuxChannel(int i) {
 
 uint32_t shtTurnOnHeater(uint8_t index) {
   shtInstance[index].heater(true); 
+  shtIsHeaterOn[i] = true;   
   return millis();
 }
 
 uint32_t shtTurnOffHeater(uint8_t index) {
   shtInstance[index].heater(false); 
+  shtIsHeaterOn[i] = false;   
   return millis();
 }
 
