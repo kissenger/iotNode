@@ -149,12 +149,14 @@ typedef struct{
  * -----------------------------------------------------------------------------------------------------
  */
 
-#define RUN_MODE                  MODE_DEPLOYED_GARAGE
-//#define RUN_MODE                  MODE_DEPLOYED_HOUSE
+//#define RUN_MODE                  MODE_DEPLOYED_GARAGE
+#define RUN_MODE                  MODE_DEPLOYED_HOUSE
 //#define RUN_MODE                  MODE_TEST_LOCAL
 //#define RUN_MODE                  MODE_TEST_LIVE
 
 dallasSensor dallasSensors[] = {    //   sensorName, I2C address, isFound
+  { "The Hovel",             {0x28, 0xB1, 0xB3, 0x9E, 0xB1, 0x21, 0x06, 0x14},     false },
+  { "Upstairs Hall",    {0x28, 0x83, 0xC5, 0xA9, 0x0B, 0x00, 0x00, 0xA6},     false },
 //  { "Hall",             {0x28, 0x95, 0x1F, 0xE4, 0xB1, 0x21, 0x06, 0xDF},     false },
 //  { "Hall Radiator",    {0x28, 0xAD, 0xB0, 0x08, 0x0A, 0x00, 0x00, 0x31},     false },
 //  { "Living Room",      {0x28, 0x13, 0x9E, 0x0A, 0x0A, 0x00, 0x00, 0x78},     false },
@@ -168,16 +170,16 @@ dallasSensor dallasSensors[] = {    //   sensorName, I2C address, isFound
 ahtSensor ahtSensors[] = {        //  sensorName, muxChannel, isFound
   // use muxChannel = 99 if mux is not in use
 //  { "ahtInside",      0,       false},
-  { "ahtStoreRoom",     99,       false},
+//  { "ahtStoreRoom",     99,       false},
 //  { "ahtTest",        2,       false}
 };
 
 bmpSensor bmpSensors[] = {       //  sensorName, muxChannel, isFound
-  { "bmpStoreRoom",  99 , false}
+//  { "bmpStoreRoom",  99 , false}
 };
 
 shtSensor shtSensors[] = {       //  sensorName, muxChannel, isFound
-  { "shtOutside",  99 , false}
+//  { "shtOutside",  99 , false}
 };
 
 /*
@@ -584,13 +586,13 @@ void selectMuxChannel(int i) {
 
 uint32_t shtTurnOnHeater(uint8_t index) {
   shtInstance[index].heater(true); 
-  shtIsHeaterOn[i] = true;   
+  shtIsHeaterOn[index] = true;   
   return millis();
 }
 
 uint32_t shtTurnOffHeater(uint8_t index) {
   shtInstance[index].heater(false); 
-  shtIsHeaterOn[i] = false;   
+  shtIsHeaterOn[index] = false;   
   return millis();
 }
 
